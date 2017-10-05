@@ -1,0 +1,26 @@
+## Interface: 70300
+## Title: GoGoMount_Manager (@project-version@)
+## Version: @project-version@
+## Game Version: 7.3
+## Author: SLOKnightfall
+## Notes: Integrates GoGoMounts Preferred and Excluded listing directly into the Mount List and adds profile support
+## Dependencies: GoGoMount
+## OptionalDeps:
+## SavedVariables: GoGoMount_ManagerDB
+
+#Libraries
+Libs\LibStub-1.0\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.xml
+Libs\AceAddon-3.0\AceAddon-3.0.xml
+Libs\AceConfig-3.0\AceConfig-3.0.xml
+Libs\AceDB-3.0\AceDB-3.0.xml
+Libs\AceDBOptions-3.0\AceDBOptions-3.0.xml
+Libs\AceEvent-3.0\AceEvent-3.0.xml
+Libs\AceGUI-3.0\AceGUI-3.0.xml
+Libs\AceLocale-3.0\AceLocale-3.0.xml
+
+#Localization
+Localization\localization-enUS.lua
+
+#Core Files
+GoGoMount_Manager.lua
