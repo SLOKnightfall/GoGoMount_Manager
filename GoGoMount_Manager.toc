@@ -1,7 +1,7 @@
-## Interface: 70300
+## Interface: 80000
 ## Title: GoGoMount_Manager (@project-version@)
 ## Version: @project-version@
-## Game Version: 7.3
+## Game Version: 8.0.3
 ## Author: SLOKnightfall
 ## Notes: Integrates GoGoMounts Preferred and Excluded listing directly into the Mount List and adds profile support
 ## Dependencies: GoGoMount
@@ -18,6 +18,7 @@ Libs\AceDBOptions-3.0\AceDBOptions-3.0.xml
 Libs\AceEvent-3.0\AceEvent-3.0.xml
 Libs\AceGUI-3.0\AceGUI-3.0.xml
 Libs\AceLocale-3.0\AceLocale-3.0.xml
+Libs\LibDualSpec-1.0\LibDualSpec-1.0.lua
 
 #Localization
 Localization\localization-enUS.lua

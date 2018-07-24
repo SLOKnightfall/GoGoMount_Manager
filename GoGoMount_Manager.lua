@@ -223,6 +223,10 @@ function GoGoMount_Manager:OnInitialize()
 	self.db.RegisterCallback(self, "OnProfileCopied", "ChangeProfile")
 	self.db.RegisterCallback(self, "OnProfileReset", "ResetProfile")
 
+	local LibDualSpec = LibStub('LibDualSpec-1.0')
+	LibDualSpec:EnhanceDatabase(self.db, "GoGoMount_Manager")
+	LibDualSpec:EnhanceOptions(options.args.profiles, self.db)
+
 	--Hooking GoGoMount funtions
 	hooksecurefunc("GoGo_GlobalExcludeMount", GoGo_GlobalExcludeMount_update)
 	hooksecurefunc("GoGo_GlobalPrefMount", GoGo_GlobalPrefMount_update)
@@ -241,6 +245,7 @@ function GoGoMount_Manager:OnEnable()
 	 LoadAddOn("Blizzard_Collections")
 	hooksecurefunc("MountJournal_UpdateMountList", UpdateMountList_Checkboxes)
 	hooksecurefunc(MountJournal.ListScrollFrame,"update", UpdateMountList_Checkboxes)
+
 end
 
 
