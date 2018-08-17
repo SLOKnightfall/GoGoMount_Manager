@@ -166,7 +166,7 @@ local function UpdateMountList_Checkboxes()
 			end
 
 			--Dont let mounts that are not able to be used be selected.
-			if isUsable then
+			--if isUsable then
 				button.GGMM.SpellID = spellID
 				button.GGMM:SetChecked(false)
 				button.GGMM.tooltip = L.GLOBAL_CLEAR
@@ -183,12 +183,14 @@ local function UpdateMountList_Checkboxes()
 					button.GGMM.tooltip = L.GLOBAL_EXCLUDE
 				end
 				button.GGMM:Show()
-			else
-				button.GGMM:Hide()
-			end
+			--else
+				--button.GGMM:Hide()
+			--end
 
 		else
-			button.GGMM:Hide()
+			if button.GGMM then
+				button.GGMM:Hide()
+			end
 		end
 	end
 end
