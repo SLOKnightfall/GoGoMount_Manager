@@ -20,4 +20,4 @@ enable-nolib-creation: no
 
 ignore:
     - README.md
-    - GoGoMount_Manager/Libs/
+    - Libs/test.txt
