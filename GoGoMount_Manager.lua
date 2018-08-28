@@ -6,13 +6,26 @@
 --	GoGoMount_Manager: Integrates GoGoMounts Preferred and Excluded listing directly into the Mount List and adds profile support
 --	///////////////////////////////////////////////////////////////////////////////////////////
 
+
+GoGoMount_Manager = LibStub("AceAddon-3.0"):NewAddon("GoGoMount_Manager","AceEvent-3.0", "AceHook-3.0")
+GoGoMount_Manager.spell_to_id = {}
+GoGoMount_Manager.JournalFilter = {}
+local private = {}
+
+local spell_to_id = GoGoMount_Manager.spell_to_id
+local L = LibStub("AceLocale-3.0"):GetLocale("GoGoMount_Manager", silent)
+
 --Mirror of the GoGoMount pref settings
 local GlobalPrefs = {}
 local GlobalExclude = {}
 local ZoneMountList = {}
+local recentMounts = {}
+local specialForms = {}
+local ExtraPassengerMounts = {}
 
 --Zone Based Settings globals
 local EnableZoneEdit = false
+local EnablePassengerEdit = false
 local selectedCont = nil
 local selectedZone = nil
 local selectedProfile = nil
@@ -28,8 +41,20 @@ local continentZoneList = {
 	[875] = C_Map.GetMapInfo(875).name, -- Zandalar
 	[876] = C_Map.GetMapInfo(876).name, -- Kul Tiras
 }
-
 local ZoneList = {}
+
+--Mount Defaults
+local MountDefaults = {
+	[230] = {["type"] = "Ground Mount", [38] = true, [330]=true, [400]=true, [402]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10004]=67},
+	[231] = {["type"] = "Riding/sea turtle", [15] = true, [39] = true, [402]=true, [404]=true, [10001]=108, [10002]=100, [10004]=108},
+	[232] = {["type"] = "Vashj'ir Seahorse", [36] = true, [53] = true, [401] = true, [10001]=371, [10004]=371},
+	[241] = {["type"] = "AQ bugs", [38] = true, [201] = true, [330]=true, [402]=true, [10002]=160},
+	[247] = {["type"] = "Red Flying Cloud", [9] = true, [38] = true, [300]=true, [301]=true, [330]=true, [400]=true, [402]=true, [403]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10003]=250, [10004]=67},
+	[248] = {["type"] = "Flying Mount", [9] = true, [38] = true, [300]=true, [301]=true, [330]=true, [400]=true, [402]=true, [403]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10003]=250, [10004]=67},
+	[254] = {["type"] = "Swimming Mount", [36] = true, [53] = true, [404] = true, [10001]=108, [10004]=108},
+	[269] = {["type"] = "Striders", [38] = true, [330]=true, [400]=true, [402]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10004]=200},
+	[284] = {["type"] = "Chauffer", [38] = true, [330]=true, [400]=true, [402]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10004]=67},
+}
 
 --Default Settings
 local defaults = {
@@ -37,14 +62,14 @@ local defaults = {
 		GlobalPrefs = {},
 		GlobalExclude = {},
 		ZoneMountList = {},
+		ExtraPassengerMounts = {},
 		init = true,
 		UseFix = true,
 		AddMissingMounts = true,
+		ForceRandom = true,
+		HistorySize = 5,
  	}
 }
-
-GoGoMount_Manager = LibStub("AceAddon-3.0"):NewAddon("GoGoMount_Manager")
-local L = LibStub("AceLocale-3.0"):GetLocale("GoGoMount_Manager", silent)
 
 --Ace3 Menu Settings
 local options = {
@@ -58,13 +83,34 @@ local options = {
 			type = 'group',
 			order = 0,
 			args = {
+				forceRandom = {
+					name = "Rechoose mount if previously selected",
+					desc = "Enables / disables bug fixes for GoGoMount",
+					type = "toggle",
+					set = function(info,val) GoGoMount_Manager.db.profile.ForceRandom = val end,
+					get = function(info) return GoGoMount_Manager.db.profile.ForceRandom end,
+					order = 1,
+					width = "full",
+				},
+				forceRandomHistory = {
+					name = "Number of mounts to keep history for",
+					--desc = "Enables / disables bug fixes for GoGoMount",
+					type = "range",
+					set = function(info,val) GoGoMount_Manager.db.profile.HistorySize = val end,
+					get = function(info) return GoGoMount_Manager.db.profile.HistorySize end,
+					order = 1,
+					width = "full",
+					min = 1,
+					max = 5,
+					step = 1,
+				},
 				fixToggle = {
 					name = "Enable GoGoMount Bug Fixes",
 					desc = "Enables / disables bug fixes for GoGoMount",
 					type = "toggle",
 					set = function(info,val) GoGoMount_Manager.db.profile.UseFix = val, GoGoMount_Manager:ToggleFixes(val) end,
 					get = function(info) return GoGoMount_Manager.db.profile.UseFix end,
-					order = 1, 
+					order = 1,
 					width = "full",
 				},
 				missingMounts = {
@@ -73,13 +119,17 @@ local options = {
 					type = "toggle",
 					set = function(info,val) GoGoMount_Manager.db.profile.AddMissingMounts = val; if val then GoGoMount_Manager:AddMissingMounts() end; end,
 					get = function(info) return GoGoMount_Manager.db.profile.AddMissingMounts end,
-					order = 2, 
+					order = 2,
 					width = "full",
 				},
 			},
 		},
-	},	
+	},
 }
+
+
+
+
 
 
 --Builds out list of zones in a given continent
@@ -95,7 +145,6 @@ local function fillContinentZoneList(continent)
 		for _, child in ipairs(children) do
 			if child.mapType == Enum.UIMapType.Zone then
 				ZoneList[child.mapID] = C_Map.GetMapInfo(child.mapID).name
-				--print (C_Map.GetMapInfo(child.mapID).name)
 			end
 		end
 	end
@@ -140,19 +189,21 @@ local zone_options = {
 					order = 0,
 					type = "header",
 					name = "GOGOMount_Manager",
-					
+
 				},
+
 				filler1 = {
 					order = 0.1,
 					type = "description",
 					name = "\n",
-					
+
 				},
+
 				globalheader = {
 					order = 0.5,
 					type = "header",
 					name = L.GLOBAL_HELPERS_HEADER,
-					
+
 				},
 				clearglobalfav = {
 					order = 1,
@@ -160,7 +211,7 @@ local zone_options = {
 					name = L.CLEAR_GLOBAL_FAVORITES,
 					func = function() GoGoMount_Manager:ClearGlobalFav() end,
 					width = 1.6,
-					
+
 				},
 				clearglobalexclude = {
 					order = 2,
@@ -168,36 +219,57 @@ local zone_options = {
 					name = L.CLEAR_GLOBAL_EXCLUDES,
 					func = function() GoGoMount_Manager:ClearGlobalExclude() end,
 					width = "full",
-					
+
+				},
+				p_filler2 = {
+					order = 2.1,
+					type = "description",
+					name = "\n",
+
+				},
+				passengerheader = {
+					order = 2.2,
+					type = "header",
+					name = L.PASSENGER_HEADER,
+					width = "full",
+
+				},
+				passengerMounts = {
+					order = 2.3,
+					type = "toggle",
+					name = L.ENABLE_PASSENGER_SETTINGS,
+					get = function(info)  return EnablePassengerEdit end,
+					set = function(info, value) private.TogglePassengerSelection(value)  end,
+					width = "full",
 				},
 				filler2 = {
 					order = 2.4,
 					type = "description",
 					name = "\n",
-					
+
 				},
 				zoneheader = {
 					order = 2.5,
 					type = "header",
 					name = L.ZONE_SETTINGS_HEADER,
 					width = "full",
-					
+
 				},
 				item = {
 					order = 3,
 					type = "toggle",
 					name = L.ENABLE_ZONE_SETTINGS,
-					get = function(info)  return EnableZoneEdit end, 
-					set = function(info, value) EnableZoneEdit = value; GoGoMount_Manager:UpdateCB()  end,
+					get = function(info)  return EnableZoneEdit end,
+					set = function(info, value) EnableZoneEdit = value; GoGoMount_Manager:UpdateCB(); private.TogglePassengerSelection(false)  end,
 					width = "full",
 
-					
+
 				},
 				cont = {
 					order = 4,
 					type = "select",
 					name = "Continent",
-					get = function(info)  return selectedCont   end, 
+					get = function(info)  return selectedCont   end,
 					set = function(info, value) selectedCont = value; fillContinentZoneList(value); selectedZone=nil  end,
 					values = continentZoneList,
 					disabled = function() return not EnableZoneEdit end,
@@ -207,7 +279,7 @@ local zone_options = {
 					order = 5,
 					type = "select",
 					name = "Zone",
-					get = function(info) return selectedZone   end, 
+					get = function(info) return selectedZone   end,
 					set = function(info, value) selectedZone = value; ZoneMountList[value] = ZoneMountList[value] or{["Preferred"] = {},["Excluded"] = {},}; GoGoMount_Manager:UpdateCB() end,
 					values = function() return ZoneList end,
 					disabled = function() return not EnableZoneEdit end,
@@ -216,7 +288,7 @@ local zone_options = {
 					order = 6,
 					type = "select",
 					name = L.COPY_PROFILE ,
-					get = function(info)  return selectedProfile    end, 
+					get = function(info)  return selectedProfile    end,
 					set = function(info, value) selectedProfile = GoGoMount_Manager.db:GetProfiles()[value]; CopyProfileToZone(selectedProfile) end,
 					values = function() return GoGoMount_Manager.db:GetProfiles() end,
 					disabled = function() return not EnableZoneEdit and not selectedZone end,
@@ -226,19 +298,19 @@ local zone_options = {
 					order = 6.4,
 					type = "description",
 					name = "\n",
-					
+
 				},
 				zoneheader_2 = {
 					order = 6.5,
 					type = "header",
 					name = L.ZONE_HELPERS_HEADER,
 					width = "full",
-					
+
 				},
 				clearselectedzone = {
 					order = 7,
 					type = "execute",
-					name = L.CLEAR_SELECTED_ZONE,			
+					name = L.CLEAR_SELECTED_ZONE,
 					func = function() GoGoMount_Manager:ClearZoneFavorites() end,
 					width = "full",
 				},
@@ -254,6 +326,27 @@ local zone_options = {
 		},
 	},
 }
+
+
+
+function private.TogglePassengerSelection(value)
+	EnablePassengerEdit = value
+	
+	if value then 
+		GoGoMount_Manager.JournalFilter:SetAllSubFilters(GoGoMount_Manager.JournalFilter.settings.filter["mountType"], false)
+		GoGoMount_Manager.JournalFilter.settings.filter["mountType"]["passenger"] = true
+		EnableZoneEdit = false
+
+	else
+		GoGoMount_Manager.JournalFilter:SetAllSubFilters(GoGoMount_Manager.JournalFilter.settings.filter["mountType"], true)
+
+	end
+
+	GoGoMount_Manager.JournalFilter:UpdateIndexMap()
+	MountJournal_UpdateMountList()
+	GoGoMount_Manager:UpdateCB()
+end
+
 
 ---Updates our GlobalPrefs if changes are made via the GoGoMounts options
 --Pram: spellID - spellID to set the table value for
@@ -277,6 +370,19 @@ local function GoGo_GlobalExcludeMount_update(spellID)
 		GlobalExclude[spellID]  = null
 	else
 		GlobalExclude[spellID]  = true
+	end
+end
+
+
+---Updates our GlobalPrefs if changes are made via the GoGoMounts options
+--Pram: spellID - spellID to set the table value for
+---------
+local function GoGo_PassengerMount_update(spellID)
+---------
+	if ExtraPassengerMounts[spellID] or GoGo_SearchTable(GoGo_Prefs.UnknownMounts, spellID) then
+		ExtraPassengerMounts[spellID]  = null
+	else
+		ExtraPassengerMounts[spellID]  = true
 	end
 end
 
@@ -316,10 +422,13 @@ local function ZonePrefMount(spellID,ZoneID)
 	else
 		spellID = tonumber(spellID)
 	end
-	if GoGo_Variables.Debug >= 10 then 
+
+	if GoGo_Variables.Debug >= 10 then
 		GoGo_DebugAddLine("GoGo_ZonePrefMount: Preference ID " .. spellID)
 	end
+
 	GoGo_Prefs.MapIDs[ZoneID] = GoGo_Prefs.MapIDs[ZoneID] or {["Preferred"] = {},["Excluded"] = {}}
+
 	for GoGo_CounterA = 1, #GoGo_Prefs.MapIDs[ZoneID]["Preferred"] do
 		if GoGo_Prefs.MapIDs[ZoneID]["Preferred"][GoGo_CounterA] == spellID then
 			table.remove(GoGo_Prefs.MapIDs[ZoneID]["Preferred"], GoGo_CounterA)
@@ -327,9 +436,11 @@ local function ZonePrefMount(spellID,ZoneID)
 			return -- mount found, removed and now returning
 		end
 	end
+
 	if not GoGo_SearchTable(GoGo_Prefs.UnknownMounts, spellID) then
 		table.insert(GoGo_Prefs.MapIDs[ZoneID]["Preferred"], spellID)
 	end
+
 	GoGo_ZonePrefMount_update(spellID,ZoneID)
 
 end
@@ -342,10 +453,13 @@ local function ZoneExcludeMount(spellID, ZoneID)
 	else
 		spellID = tonumber(spellID)
 	end
-	if GoGo_Variables.Debug >= 10 then 
+
+	if GoGo_Variables.Debug >= 10 then
 		GoGo_DebugAddLine("GoGo_ZoneExcludedMount: Excluded ID " .. spellID)
 	end
+
 	GoGo_Prefs.MapIDs[ZoneID] = GoGo_Prefs.MapIDs[ZoneID] or {["Preferred"] = {},["Excluded"] = {}}
+
 	for GoGo_CounterA = 1, #GoGo_Prefs.MapIDs[ZoneID]["Excluded"] do
 		if GoGo_Prefs.MapIDs[ZoneID]["Excluded"][GoGo_CounterA] == spellID then
 			table.remove(GoGo_Prefs.MapIDs[ZoneID]["Excluded"], GoGo_CounterA)
@@ -353,6 +467,7 @@ local function ZoneExcludeMount(spellID, ZoneID)
 			return
 		end
 	end
+
 	table.insert(GoGo_Prefs.MapIDs[ZoneID]["Excluded"], spellID)
 	GoGo_ZoneExcludeMount_update(spellID,ZoneID)
 end
@@ -371,13 +486,13 @@ local function init_button(frame, index)
 	checkbox:RegisterForClicks("AnyUp")
 	checkbox:SetScript("OnClick",
 	function(self, button)
-		if (checkbox:GetChecked()) and button == "LeftButton" and EnableZoneEdit then 
+		if (checkbox:GetChecked()) and button == "LeftButton" and EnableZoneEdit then
 		-- Sets as Perfered Mount
 			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
 			ZonePrefMount(checkbox.spellID, selectedZone )
 			checkbox:SetCheckedTexture("Interface/Buttons/UI-CheckBox-Check")
-			checkbox.tooltip = L.ZONE_ENABLE	
-		elseif (checkbox:GetChecked()) and button == "LeftButton" and not EnableZoneEdit then  -- Sets as Perfered Mount
+			checkbox.tooltip = L.ZONE_ENABLE
+		elseif (checkbox:GetChecked()) and button == "LeftButton" and not EnableZoneEdit and not EnablePassengerEdit then  -- Sets as Perfered Mount
 			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
 			GoGo_GlobalPrefMount(checkbox.spellID)
 			checkbox:SetCheckedTexture("Interface/Buttons/UI-CheckBox-Check")
@@ -388,7 +503,8 @@ local function init_button(frame, index)
 			ZoneExcludeMount(checkbox.spellID, selectedZone)
 			checkbox:SetCheckedTexture("Interface/Buttons/UI-GROUPLOOT-PASS-DOWN")
 			checkbox.tooltip = L.ZONE_EXCLUDE
-		elseif (checkbox:GetChecked()) and button == "RightButton" and not EnableZoneEdit then  -- Sets as Excluded Mount
+
+		elseif (checkbox:GetChecked()) and button == "RightButton" and not EnableZoneEdit and not EnablePassengerEdit then  -- Sets as Excluded Mount
 			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
 			GoGo_GlobalExcludeMount(checkbox.spellID)
 			checkbox:SetCheckedTexture("Interface/Buttons/UI-GROUPLOOT-PASS-DOWN")
@@ -404,7 +520,18 @@ local function init_button(frame, index)
 				ZoneExcludeMount(checkbox.spellID, selectedZone)
 			end
 			checkbox.tooltip = L.GLOBAL_CLEAR
-		elseif not (checkbox:GetChecked()) and not EnableZoneEdit then 
+		elseif (checkbox:GetChecked()) and button == "LeftButton" and EnablePassengerEdit then --passenger mount
+		-- Sets as Perfered Mount
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+			GoGo_ExtraPassengerMounts(checkbox.spellID)
+			checkbox:SetCheckedTexture("Interface/Buttons/UI-CheckBox-Check")
+			checkbox.tooltip = "Pass"
+		elseif not (checkbox:GetChecked()) and EnablePassengerEdit then
+			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
+			GoGo_ExtraPassengerMounts(checkbox.spellID)
+			checkbox.tooltip = L.GLOBAL_CLEAR
+
+		elseif not (checkbox:GetChecked()) and not EnableZoneEdit then
 			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
 			if GlobalPrefs[checkbox.spellID] then
 				GoGo_GlobalPrefMount(checkbox.spellID)
@@ -437,6 +564,7 @@ local function RefreshFromGoGoPrefs()
 	wipe(GlobalPrefs)
 	wipe(GlobalExclude)
 	wipe(ZoneMountList)
+	wipe(ExtraPassengerMounts)
 
 	if GoGo_Prefs.GlobalPrefMounts then
 		for counter = 1, #GoGo_Prefs.GlobalPrefMounts do
@@ -445,15 +573,23 @@ local function RefreshFromGoGoPrefs()
 	end
 
 	if GoGo_Prefs.GlobalExclude then
-		for counter = 1, #GoGo_Prefs.GlobalPrefMounts do
+		for counter = 1, #GoGo_Prefs.GlobalExclude do
 			GlobalExclude[GoGo_Prefs.GlobalExclude[counter]] = true
+		
+		end
+	end
+
+	if GoGo_Prefs.ExtraPassengerMounts then
+		for counter = 1, #GoGo_Prefs.ExtraPassengerMounts do
+			ExtraPassengerMounts[GoGo_Prefs.ExtraPassengerMounts[counter]] = true
+		
 		end
 	end
 
 	if GoGo_Prefs.MapIDs then
 		for zone, data in pairs(GoGo_Prefs.MapIDs) do
 			ZoneMountList[zone] = {["Preferred"] = {}, ["Excluded"] = {},}
-			
+
 			for counter = 1,#GoGo_Prefs.MapIDs[zone]["Preferred"] do
 				ZoneMountList[zone]["Preferred"][GoGo_Prefs.MapIDs[zone]["Preferred"][counter]] = true
 			end
@@ -498,6 +634,7 @@ local function UpdateMountList_Checkboxes()
 				button.GGMM.tooltip = L.GLOBAL_CLEAR
 				if EnableZoneEdit then
 					button.GGMM.tooltip = L.ZONE_CLEAR
+					button.GGMM.text:SetText("Z:")
 					button.GGMM.text:Show()
 					ZoneMountList[selectedZone] = ZoneMountList[selectedZone] or {["Preferred"]={},["Excluded"]={}}
 					if ZoneMountList[selectedZone]["Preferred"][spellID]then
@@ -510,6 +647,15 @@ local function UpdateMountList_Checkboxes()
 						button.GGMM:SetCheckedTexture("Interface/Buttons/UI-GROUPLOOT-PASS-DOWN")
 						button.GGMM:SetChecked(true)
 						button.GGMM.tooltip = L.ZONE_EXCLUDE
+					end
+				elseif EnablePassengerEdit then 
+					button.GGMM.text:SetText("P:")
+					button.GGMM.text:Show()
+
+					if ExtraPassengerMounts[spellID] then
+						button.GGMM:SetCheckedTexture("Interface/Buttons/UI-CheckBox-Check")
+						button.GGMM:SetChecked(true)
+						button.GGMM.tooltip = "Passeng"
 					end
 				else
 					button.GGMM.text:Hide()
@@ -543,17 +689,27 @@ local function UpdateMountList_Checkboxes()
 	--Sets status message
 	if EnableZoneEdit then
 		GGMM_ZONE_ALERT:SetText("Zone Based Settings")
+
 	elseif GoGo_Prefs.MapIDs[currentMapID] and (#GoGo_Prefs.MapIDs[currentMapID]["Preferred"] > 0 or #GoGo_Prefs.MapIDs[currentMapID]["Excluded"] > 0) then
 		GGMM_ZONE_ALERT:SetText("Zone has Favorite Overides")
+
 	else
 		GGMM_ZONE_ALERT:SetText("")
 	end
 end
 
+
 ---------
 function GoGoMount_Manager:UpdateCB()
 ---------
 	UpdateMountList_Checkboxes()
+end
+
+
+---------
+function GoGoMount_Manager:SelectedZone()
+---------
+	return selectedZone
 end
 
 
@@ -563,7 +719,6 @@ local function UpdateGoGoMountPrefs()
 ---------
 	GoGo_Prefs.GlobalPrefMounts = {}
 	for id in pairs(GlobalPrefs) do
-
 		tinsert(GoGo_Prefs.GlobalPrefMounts,id)
 	end
 
@@ -572,10 +727,14 @@ local function UpdateGoGoMountPrefs()
 		tinsert(GoGo_Prefs.GlobalExclude,id)
 	end
 
+	GoGo_Prefs.ExtraPassengerMounts  = {}
+	for id in pairs(ExtraPassengerMounts) do
+		tinsert(GoGo_Prefs.ExtraPassengerMounts,id)
+	end
+
 	GoGo_Prefs.MapIDs  = {}
 	for zone, data in pairs(ZoneMountList) do
-		GoGo_Prefs.MapIDs[zone] = {["Preferred"] = {},
-					["Excluded"] = {},}
+		GoGo_Prefs.MapIDs[zone] = {["Preferred"] = {}, ["Excluded"] = {},}
 
 		for id in pairs(data["Preferred"]) do
 			tinsert(GoGo_Prefs.MapIDs[zone]["Preferred"],id)
@@ -586,7 +745,6 @@ local function UpdateGoGoMountPrefs()
 		end
 	end
 
-		
 end
 
 
@@ -605,7 +763,7 @@ function GoGoMount_Manager:OnInitialize()
 	options.args.profiles = LibStub("AceDBOptions-3.0"):GetOptionsTable(self.db)
 	LibStub("AceConfig-3.0"):RegisterOptionsTable("GoGoMount_Manager", options)
 	LibStub("AceConfig-3.0"):RegisterOptionsTable("GoGoMount_Manager_Zone", zone_options)
-	
+
 	self.optionsFrame = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("GoGoMount_Manager", "GoGoMount_Manager")
 
 	self.db.RegisterCallback(self, "OnProfileChanged", "ChangeProfile")
@@ -619,10 +777,12 @@ function GoGoMount_Manager:OnInitialize()
 	LibDualSpec:EnhanceOptions(options.args.profiles, self.db)
 
 	--Hooking GoGoMount funtions
-	hooksecurefunc("GoGo_GlobalExcludeMount", GoGo_GlobalExcludeMount_update)
-	hooksecurefunc("GoGo_GlobalPrefMount", GoGo_GlobalPrefMount_update)
-	hooksecurefunc("GoGo_ZoneExcludeMount", GoGo_ZoneExcludeMount_update)
-	hooksecurefunc("GoGo_ZonePrefMount", GoGo_ZonePrefMount_update)
+	self:SecureHook("GoGo_GlobalExcludeMount", GoGo_GlobalExcludeMount_update)
+	self:SecureHook("GoGo_ExtraPassengerMounts", GoGo_PassengerMount_update)
+
+	self:SecureHook("GoGo_GlobalPrefMount", GoGo_GlobalPrefMount_update)
+	self:SecureHook("GoGo_ZoneExcludeMount", GoGo_ZoneExcludeMount_update)
+	self:SecureHook("GoGo_ZonePrefMount", GoGo_ZonePrefMount_update)
 end
 
 
@@ -633,18 +793,24 @@ function GoGoMount_Manager:OnEnable()
 	GlobalPrefs = self.db.profile.GlobalPrefs or {}
 	GlobalExclude = self.db.profile.GlobalExclude or {}
 	ZoneMountList = self.db.profile.ZoneMountList or {}
+	ExtraPassengerMounts = self.db.profile.ExtraPassengerMounts or {}
 
 	GoGoMount_Manager:ToggleFixes(self.db.profile.UseFix)
+	GoGoMount_Manager:ToggleRandomizer(self.db.profile.ForceRandom)
+	self:SecureHook("GoGo_GetMountDB", "AddMissingMounts")
 	GoGo_GetMountDB()
-	--GoGoMount_Manager:AddMissingMounts()
+
 	GoGoMount_Manager:SyncPrefs()
 
 	--Hooking MountJournal functions
 	LoadAddOn("Blizzard_Collections")
-	hooksecurefunc("MountJournal_UpdateMountList", UpdateMountList_Checkboxes)
-	hooksecurefunc(MountJournal.ListScrollFrame,"update", UpdateMountList_Checkboxes)
+	self:SecureHook("MountJournal_UpdateMountList", UpdateMountList_Checkboxes)
+	self:SecureHook(MountJournal.ListScrollFrame,"update", UpdateMountList_Checkboxes)
 
 	GoGoMount_Manager:Build()
+	GoGoMount_Manager.JournalFilter:OnLogin()
+	GoGoMount_Manager.JournalFilter:LoadUI()
+	GoGoMount_Manager.JournalFilter:InitDropdown()
 end
 
 
@@ -656,6 +822,7 @@ function GoGoMount_Manager:ResetProfile()
 	GlobalPrefs = {}
 	GlobalExclude = {}
 	ZoneMountList = {}
+	ExtraPassengerMounts = {}
 	GoGoMount_Manager:SyncPrefs()
 	GoGoMount_Manager:UpdateCB()
 end
@@ -668,6 +835,7 @@ function GoGoMount_Manager:ChangeProfile()
 	GlobalPrefs = self.db.profile.GlobalPrefs or {}
 	GlobalExclude = self.db.profile.GlobalExclude or {}
 	ZoneMountList = self.db.profile.ZoneMountList or {}
+	ExtraPassengerMounts = self.db.profile.ExtraPassengerMounts or {}
 	GoGoMount_Manager:SyncPrefs()
 	GoGoMount_Manager:UpdateCB()
 end
@@ -709,6 +877,7 @@ function GoGoMount_Manager:ClearGlobalExclude()
 end
 
 
+--clears current zone favorites
 ---------
 function GoGoMount_Manager:ClearZoneFavorites()
 ---------
@@ -728,6 +897,7 @@ function GoGoMount_Manager:ClearAllZoneFavorites()
 end
 
 
+--Builds the menu frame for the Mount Journal
 ---------
 function GoGoMount_Manager:Build()
 ---------
@@ -741,7 +911,7 @@ function GoGoMount_Manager:Build()
 	f:SetFrameStrata('HIGH')
 	f:SetMovable(false)
 	f:SetToplevel(true)
-	
+
 	f.border = f:CreateTexture()
 	f.border:SetAllPoints()
 	f.border:SetColorTexture(0,0,0,1)
@@ -754,7 +924,7 @@ function GoGoMount_Manager:Build()
 	--f.background:SetColorTexture(0.1,0.1,0.1,1)
 	f.background:SetTexture("Interface\\PetBattles\\MountJournal-BG")
 	f.background:SetDrawLayer('ARTWORK')
-	
+
 	local close_ = CreateFrame("Button", nil, f)
 	close_:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
 	close_:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
@@ -765,7 +935,7 @@ function GoGoMount_Manager:Build()
 		self:GetParent():Hide()
 		self:GetParent().free = true
 	end)
-	
+
 	f.close = close_
 
 	local content = CreateFrame("Frame",nil, f)
@@ -782,57 +952,59 @@ function GoGoMount_Manager:Build()
 		wipe(self.localstatus)
 	end
 
-	f:SetScript("OnShow", function(self) 
-		selectedZone = C_Map.GetBestMapForUnit("player");	
-		ZoneList = {[C_Map.GetBestMapForUnit("player")]=C_Map.GetMapInfo(C_Map.GetBestMapForUnit("player")).name};
-		selectedCont = nil;
-		EnableZoneEdit = false;
-		LibStub("AceConfigDialog-3.0"):Open("GoGoMount_Manager_Zone", widget, "zoneoptions"); 
+	f:SetScript("OnShow", function(self)
+		selectedZone = C_Map.GetBestMapForUnit("player")
+		ZoneList = {[C_Map.GetBestMapForUnit("player")]=C_Map.GetMapInfo(C_Map.GetBestMapForUnit("player")).name}
+		selectedCont = nil
+		EnableZoneEdit = false
+		LibStub("AceConfigDialog-3.0"):Open("GoGoMount_Manager_Zone", widget, "zoneoptions")
 		f:Show()
 		end)
 
-	f:SetScript("OnHide", function(self)  
-		selectedZone =C_Map.GetBestMapForUnit("player");
-		ZoneList = {[C_Map.GetBestMapForUnit("player")]=C_Map.GetMapInfo(C_Map.GetBestMapForUnit("player")).name};
-		selectedCont = nil;
-		EnableZoneEdit = false;
+	f:SetScript("OnHide", function(self)
+		selectedZone =C_Map.GetBestMapForUnit("player")
+		ZoneList = {[C_Map.GetBestMapForUnit("player")]=C_Map.GetMapInfo(C_Map.GetBestMapForUnit("player")).name}
+		selectedCont = nil
+		EnableZoneEdit = false
 		GoGoMount_Manager:UpdateCB()
-		--f:Show()
+		f:Hide()
 		end)
 
-
-
 	LibStub("AceGUI-3.0"):RegisterAsContainer(widget)
-	--f:Show()
 
-	local mountButton = CreateFrame("Button", nil , MountJournal);
+	local mountButton = CreateFrame("Button", nil , MountJournal)
 	mountButton:SetNormalTexture("Interface\\Buttons\\UI-MicroButton-Mounts-Up")
 	mountButton:SetPushedTexture("Interface\\Buttons\\UI-MicroButton-Mounts-Down")
-	mountButton:SetPoint("BOTTOMRIGHT", MountJournal, "BOTTOMRIGHT", 0, 0);
+	mountButton:SetPoint("BOTTOMRIGHT", MountJournal, "BOTTOMRIGHT", 0, 0)
 	mountButton:SetWidth(30)
 	mountButton:SetHeight(45)
-	mountButton:SetScript("OnClick", function(self, button, down) 
-		
-		if f:IsShown() then
-			f:Hide()
+	mountButton:SetScript("OnClick", function(self, button, down)
+		local Shift = IsShiftKeyDown()
+		if Shift then
+			selectedZone = C_Map.GetBestMapForUnit("player")
+			EnableZoneEdit = not EnableZoneEdit
+			GoGoMount_Manager:UpdateCB()
 		else
-			f:Show()
+			if f:IsShown() then
+				f:Hide()
+			else
+				f:Show()
+			end
 		end
-	end);
+
+	end)
 	mountButton:SetScript("OnEnter",
 		function(self)
-			GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
-			GameTooltip:SetText(L.GOGOMOUNT_BUTTON_TOOLTIP, 1, 1, 1);
-			--GameTooltip:AddLine(L.AUTO_CAGE_TOOLTIP_2, nil, nil, nil, true);
-			--GameTooltip:AddLine(L.AUTO_CAGE_TOOLTIP_3, nil, nil, nil, true);
-			GameTooltip:Show();
+			GameTooltip:SetOwner (self, "ANCHOR_RIGHT")
+			GameTooltip:SetText(L.GOGOMOUNT_BUTTON_TOOLTIP, 1, 1, 1)
+			GameTooltip:Show()
 		end
-	);
+	)
 	mountButton:SetScript("OnLeave",
 		function()
-			GameTooltip:Hide();
+			GameTooltip:Hide()
 		end
-	);
+	)
 
 	local text = mountButton:CreateFontString("GGMM_ZONE_ALERT")
 	mountButton.text = text
@@ -847,29 +1019,17 @@ end
 
 --GOGOMount Fixes:  Small code tweaks to fix some issues with GoGoMount until they are officialy fixed
 
-
---Builds a maping to the mount spell id to its mount journal id
-local spell_to_id = {}
-
-
-	if (GetNumCompanions("MOUNT") >= 1) then
-		local mountIDs = C_MountJournal.GetMountIDs()
-		for i, id in pairs(mountIDs) do
-			local _, spellID, _, _, isUsable, _, _, isFactionSpecific, faction, _, isCollected, _ = C_MountJournal.GetMountInfoByID(id)
-			spell_to_id[spellID] = id
-		end
-	end
-
-
---Currently the if favorite mounts are selected instant casts are not found due to not being in the filtered list. 
---This builds a list of "special" mounts (IE forms, spells, items) that are not included when global/zone favorites are set and adds them 
+--Currently the if favorite mounts are selected instant casts are not found due to not being in the filtered list.
+--This builds a list of "special" mounts (IE forms, spells, items) that are not included when global/zone favorites are set and adds them
 -- to the passed list
----------
-local function BuildSpecialMountList(FilteredMountList)
----------
-	if not GoGoMount_Manager.db.profile.UseFix then return end
+local GoGo_MountList = {}
 
-	local GoGo_MountList = {}
+---------
+function GoGoMount_Manager:BuildSpecialMountList(FilteredMountList)
+---------
+	if not GoGoMount_Manager.db.profile.UseFix or #FilteredMountList == 0  then return end
+
+	GoGo_MountList = {}
 
 	if GoGo_Variables.Player.Class == "DRUID" then
 		if GoGo_InBook(GoGo_Variables.Localize.AquaForm) then
@@ -904,7 +1064,7 @@ local function BuildSpecialMountList(FilteredMountList)
 
 	if GoGo_Variables.Player.Race == "Worgen" then
 		if (GoGo_InBook(GoGo_Variables.Localize.RunningWild)) then
-			if GoGo_Variables.Debug >= 10 then 
+			if GoGo_Variables.Debug >= 10 then
 				GoGo_DebugAddLine("GoGo_BuildMountList: We are a Worgen and have Running Wild - added to known mount list.")
 			end
 			table.insert(GoGo_MountList, GoGo_Variables.Localize.RunningWild)
@@ -915,7 +1075,7 @@ local function BuildSpecialMountList(FilteredMountList)
 		local GoGo_SpellId = GoGo_Variables.MountItemIDs[MountItemID][50000]
 		if GoGo_Variables.MountItemIDs[MountItemID][51000] then  -- in bag items
 			if GoGo_InBags(MountItemID) then
-				if GoGo_Variables.Debug >= 10 then 
+				if GoGo_Variables.Debug >= 10 then
 					GoGo_DebugAddLine("GoGo_BuildMountList: Found mount item ID " .. MountItemID .. " in a bag and added to known mount list.")
 				end
 				table.insert(GoGo_MountList, GoGo_SpellId)
@@ -930,50 +1090,45 @@ local function BuildSpecialMountList(FilteredMountList)
 	-- WoD Nagrand's Garrison mounts
 	GoGo_Variables.Player.MapID = C_Map.GetBestMapForUnit("player")
 	if GoGo_Variables.Player.MapID == 550 then
-		-- or 551, 552, 553 TODO	
+		-- or 551, 552, 553 TODO
 		local name = GetSpellInfo(161691)
 		spellID = select(7, GetSpellInfo(name))
 		if spellID == 165803 or spellID == 164222 then
 			table.insert(GoGo_MountList, spellID)
 		end
 	end
-	
+
 
 	--Adds any special mounts to the passed Mount List
 	for index, mountID in pairs(GoGo_MountList) do
-		if not GoGo_SearchTable(FilteredMountList, mountID) then 
+		if not GoGo_SearchTable(FilteredMountList, mountID) then
 			table.insert(FilteredMountList,mountID)
 		end
 	end
 
 end
 
---Hooking "GoGo_CheckForUnknownMounts" as that is a good time to inject special mounts without having to rewrite a lot of code
-hooksecurefunc("GoGo_CheckForUnknownMounts", BuildSpecialMountList);
-
-
 
 --Fixes GoGoMount trying to look up profession skills based on old level.  We really dont care about profession levels any more
 --as the default api will tell us if a character has the profession/skill via the C_MountJournal.GetMountInfoByID is usable flag
 --Just returning a large number to have GoGoMount skip any profession based filtering
 ---------
-local GoGo_GetProfSkillLevel_hook = GoGo_GetProfSkillLevel
 local function GoGo_GetProfSkillLevel_Fix()
 ---------
 	return 900
 end
 
 
---GoGo_RemoveUnusableMounts did not properly remove mounts due to IsUsableSpell not being reliable bacuse the spell to cast an unuaable mount will always return true.  
+local listSize = 0
+--GoGo_RemoveUnusableMounts did not properly remove mounts due to IsUsableSpell not being reliable bacuse the spell to cast an unuaable mount will always return true.
 --Needs to verify that the mount is actually useable via the mount list
 ---------
-local GoGo_RemoveUnusableMounts_hook = GoGo_RemoveUnusableMounts
 local function GoGo_RemoveUnusableMounts_Fix(MountList)  -- Remove mounts Blizzard says we can't use due to location, timers, etc.
 ---------
 	if not MountList or #MountList == 0 then
 		return {}
 	end
-	
+
 	local GoGo_NewTable = {}
 	for a=1,#MountList do
 		local GoGo_SpellID = MountList[a]
@@ -1002,26 +1157,25 @@ local function GoGo_RemoveUnusableMounts_Fix(MountList)  -- Remove mounts Blizza
 				--Lookup the mount ID and verify if it is actuallu usable
 				if spell_to_id[GoGo_SpellID] then
 					isUsable = select(5, C_MountJournal.GetMountInfoByID(spell_to_id[GoGo_SpellID]))
-					if isUsable then 
+					if isUsable then
 						table.insert(GoGo_NewTable, GoGo_SpellID)
 					end
 
 				elseif IsUsableSpell(GoGo_SpellID) then  -- don't use IsSpellKnown() - mounts in collection are not known... morons....
 					table.insert(GoGo_NewTable, GoGo_SpellID)
-				
+
 				end
 
 			end
 		end
 	end
-
+	listSize = #GoGo_NewTable
 	return GoGo_NewTable
-end 
+end
 
 
 --Fix for the change to the returned data of GetShapeshiftFormInfo()
 ---------
-local GoGo_IsShifted_hook = GoGo_IsShifted
 local function GoGo_IsShifted_Fix()
 ---------
 	if GoGo_Variables.Debug >= 10 then
@@ -1029,7 +1183,7 @@ local function GoGo_IsShifted_Fix()
 	end
 
 	for i = 1, GetNumShapeshiftForms() do
-		local icon, active, castable, spellID = GetShapeshiftFormInfo(i);
+		local icon, active, castable, spellID = GetShapeshiftFormInfo(i)
 		if active then
 			if GoGo_Variables.Debug >= 10 then
 				GoGo_DebugAddLine("GoGo_IsShifted: Found " .. name)
@@ -1046,29 +1200,18 @@ end
 function GoGoMount_Manager:ToggleFixes(toggle)
 ---------
 	if toggle then
-		GoGo_IsShifted = GoGo_IsShifted_Fix
-		GoGo_GetProfSkillLevel = GoGo_GetProfSkillLevel_Fix
-		GoGo_RemoveUnusableMounts = GoGo_RemoveUnusableMounts_Fix
+		self:RawHook("GoGo_IsShifted",GoGo_IsShifted_Fix, true)
+		self:RawHook("GoGo_GetProfSkillLevel",GoGo_GetProfSkillLevel_Fix, true)
+		self:RawHook("GoGo_RemoveUnusableMounts",GoGo_RemoveUnusableMounts_Fix, true)
+		self:Hook("GoGo_CheckForUnknownMounts","BuildSpecialMountList", true)
+		
 	else
-		GoGo_IsShifted = GoGo_IsShifted_hook
-		GoGo_GetProfSkillLevel = GoGo_GetProfSkillLevel_hook
-		GoGo_RemoveUnusableMounts = GoGo_RemoveUnusableMounts_hook
+		self:Unhook("GoGo_IsShifted")
+		self:Unhook("GoGo_GetProfSkillLevel")
+		self:Unhook("GoGo_RemoveUnusableMounts")
+		self:Unhook("GoGo_CheckForUnknownMounts")
 	end
 end
-
-
---Mount Defaults
-local MountDefaults = {
-	[230] = {["type"] = "Ground Mount", [38] = true, [330]=true, [400]=true, [402]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10004]=67},
-	[231] = {["type"] = "Riding/sea turtle", [15] = true, [39] = true, [402]=true, [404]=true, [10001]=108, [10002]=100, [10004]=108},
-	[232] = {["type"] = "Vashj'ir Seahorse", [36] = true, [53] = true, [401] = true, [10001]=371, [10004]=371},
-	[241] = {["type"] = "AQ bugs", [38] = true, [201] = true, [330]=true, [402]=true, [10002]=160},
-	[247] = {["type"] = "Red Flying Cloud", [9] = true, [38] = true, [300]=true, [301]=true, [330]=true, [400]=true, [402]=true, [403]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10003]=250, [10004]=67},
-	[248] = {["type"] = "Flying Mount", [9] = true, [38] = true, [300]=true, [301]=true, [330]=true, [400]=true, [402]=true, [403]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10003]=250, [10004]=67},
-	[254] = {["type"] = "Swimming Mount", [36] = true, [53] = true, [404] = true, [10001]=108, [10004]=108},
-	[269] = {["type"] = "Striders", [38] = true, [330]=true, [400]=true, [402]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10004]=200},
-	[284] = {["type"] = "Chauffer", [38] = true, [330]=true, [400]=true, [402]=true, [405]=true, [701]=true, [10001]=67, [10002]=160, [10004]=67},
-}
 
 
 --Looks in the mount journal and adds missing mounts to the GoGoMountDB
@@ -1086,12 +1229,80 @@ function GoGoMount_Manager:AddMissingMounts()
 				--GoGo_Msg(UnknownMount)
 			else
 				GoGo_Variables.MountDB[spellID] = MountDefaults[mountType]
-				--print(MountDefaults[mountType]["type"].." Mount: "..mountName.."(".. spellID..")" .." added.")  
+				--print(MountDefaults[mountType]["type"].." Mount: "..mountName.."(".. spellID..")" .." added.")
 			end
-		
+
 		end
 	end
 	GoGoMount_Manager:UpdateGoGoMountPrefs()
 end
 
-hooksecurefunc("GoGo_GetMountDB", GoGoMount_Manager.AddMissingMounts);
+
+---------
+local function SearchTable(Table, Value)
+---------
+	if type(Table) == "table" and #Table > 0 then
+		for a=1, #Table do
+			if Table[a] == Value then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+
+---------
+function GoGoMount_Manager:ToggleRandomizer(toggle)
+---------
+	if toggle then
+		self:RawHook("GoGo_ChooseMount","RandomizeMount", true)
+		--GoGo_ChooseMount = GoGoMount_Manager.RandomizeMount
+
+	else
+		--GoGo_ChooseMount = GoGo_ChooseMount_hook
+		self:Unhook("GoGo_ChooseMount")
+	end
+end
+
+
+local lastmount = ""
+--Function to try to prevent the same mount from being chosen multiple times in a row
+---------
+function GoGoMount_Manager:RandomizeMount()
+---------
+	local selectedMount = self.hooks.GoGo_ChooseMount()
+	local keepSize = min(GoGoMount_Manager.db.profile.HistorySize, listSize)
+	local breakpoint = 3
+	local duplicatePick = SearchTable(recentMounts, selectedMount)
+	local counter = 0
+
+	while duplicatePick do
+		selectedMount = self.hooks.GoGo_ChooseMount()
+
+		if selectedMount == lastmount then 
+			selectedMount = self.hooks.GoGo_ChooseMount()
+		end
+
+		counter = counter + 1
+		duplicatePick = SearchTable(recentMounts, selectedMount)
+		
+		if counter > keepSize + 1 then 
+			break
+		end
+	end
+
+	table.insert(recentMounts, selectedMount)
+
+	if #recentMounts > keepSize then
+		table.remove(recentMounts, 1)
+	end
+
+	for i, name in pairs(recentMounts) do
+	--print(name)
+	end
+	--print("---")
+	lastmount = selectedMount
+
+	return selectedMount
+end
