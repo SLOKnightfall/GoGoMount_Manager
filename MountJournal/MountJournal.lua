@@ -84,15 +84,15 @@ local function RegisterMountJournalHooks()
 	GoGoMount_Manager:RawHook(C_MountJournal, "GetDisplayedMountInfo", C_MountJournal_GetDisplayedMountInfo, true)
 	GoGoMount_Manager:RawHook(C_MountJournal, "GetDisplayedMountInfoExtra", C_MountJournal_GetDisplayedMountInfoExtra, true)
 	GoGoMount_Manager:RawHook(C_MountJournal, "SetIsFavorite", function(index, isFavored)
-		local result = GoGoMount_Manager.hooks[C_MountJournal].SetIsFavorite(isFavored)
+		local result = GoGoMount_Manager.hooks[C_MountJournal].SetIsFavorite(index,isFavored)
 		JournalFilter:UpdateIndexMap()
 		return result
 	end, true)
 	GoGoMount_Manager:RawHook(C_MountJournal, "GetIsFavorite", function(index)
-		return GoGoMount_Manager.hooks[C_MountJournal].GetIsFavorite()
+		return GoGoMount_Manager.hooks[C_MountJournal].GetIsFavorite(index)
 	end, true)
 	GoGoMount_Manager:RawHook(C_MountJournal, "Pickup", function(index)
-		return GoGoMount_Manager.hooks[C_MountJournal].Pickup()
+		return GoGoMount_Manager.hooks[C_MountJournal].Pickup(index)
 	end, true)
 end
 
